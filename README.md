@@ -16,10 +16,10 @@ See [docs/ASSIGNMENT_REVIEW.md](docs/ASSIGNMENT_REVIEW.md) for the spec critique
 | D | Kubernetes | Planned |
 | E | Verification and report | Planned |
 
-## Quick start (Ubuntu, Python 3.11 or newer)
+## Quick start (Ubuntu, Python 3.11 exactly, to match Docker and CI)
 
 ```bash
-make install     # venv plus dev dependencies
+make install     # builds .venv with python3.11; use PYTHON=/path/to/python3.11 if it is not on PATH
 make check       # black, flake8, mypy strict, pytest with coverage
 make seed        # writes a SYNTHETIC model into ./models for local smoke tests
 make run         # gunicorn on :5000

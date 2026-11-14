@@ -1,0 +1,98 @@
+# Local integration stack.
+#
+#   cp .env.example .env            # then edit the values
+#   docker compose run --rm seed    # one-off: write a SYNTHETIC model to the volume
+#   docker compose up -d --build    # API on http://localhost:5000
+#   docker compose --profile airflow up -d   # adds Postgres + Airflow UI on :8080
+#
+# The API mounts the model volume read-only; only trainers (and the seed job) write.
+
+name: btc-forecast
+
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
+  AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-airflow}
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: runtime
+    image: btc-forecast-api:local
+    ports:
+      - "5000:5000"
+    environment:
+      MODEL_DIR: /app/models
+      MODEL_STAGE: local
+      MODEL_POLL_SECONDS: "5"
+      LOG_LEVEL: INFO
+      RELOAD_TOKEN: ${RELOAD_TOKEN:?set RELOAD_TOKEN in .env}
+    volumes:
+      - models:/app/models:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/ready', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  seed:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: seed
+    image: btc-forecast-seed:local
+    volumes:
+      - models:/app/models
+    profiles: ["seed"]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles: ["airflow"]
+    restart: unless-stopped
+
+  # Single-container Airflow (api-server, scheduler, dag-processor, triggerer).
+  # Chosen over the multi-service layout to stay inside a 16 GB laptop budget.
+  # Python task dependencies are NOT installed here: training runs in its own
+  # image (Part C), which keeps Airflow's pinned dependency set intact.
+  airflow:
+    image: apache/airflow:3.1.8
+    command: standalone
+    environment:
+      <<: *airflow-env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["airflow"]
+    restart: unless-stopped
+
+volumes:
+  models:
+  pgdata:

@@ -11,7 +11,7 @@ See [docs/ASSIGNMENT_REVIEW.md](docs/ASSIGNMENT_REVIEW.md) for the spec critique
 | Part | Scope | State |
 |------|-------|-------|
 | A | Flask API, gunicorn, pytest | In review |
-| B | Docker, Compose, GitHub Actions | Next |
+| B | Docker, Compose, GitHub Actions | In review |
 | C | Airflow, ETL, training, Kubeflow | Planned |
 | D | Kubernetes | Planned |
 | E | Verification and report | Planned |
@@ -30,6 +30,17 @@ curl localhost:5000/health
 curl localhost:5000/ready
 curl -X POST localhost:5000/predict -H 'Content-Type: application/json' -d '{"forecast_days": 3}'
 curl localhost:5000/metrics
+```
+
+## Run in Docker
+
+```bash
+cp .env.example .env                    # then change every value
+docker compose run --rm seed            # write a SYNTHETIC model into the volume (first run only)
+docker compose up -d --build            # API on http://localhost:5000
+scripts/check_api.sh                    # black-box checks against the running API
+docker compose --profile airflow up -d  # optional: Postgres and Airflow on :8080
+make smoke                              # full container smoke test
 ```
 
 ## API

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -171,3 +173,22 @@ def test_prune_edge_cases(tmp_path: Path) -> None:
     assert prune_versions(tmp_path, keep=1) == []
     with pytest.raises(ArtifactError):
         prune_versions(tmp_path, keep=0)
+
+
+def test_artifacts_readable_by_other_users_even_under_strict_umask(
+    tmp_path: Path, publish: Publish
+) -> None:
+    previous = os.umask(0o077)
+    try:
+        publish(tmp_path, "v1")
+    finally:
+        os.umask(previous)
+    version_dir = tmp_path / "versions" / "v1"
+
+    def mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    assert mode(version_dir) == 0o755
+    assert mode(tmp_path / "CURRENT") == 0o644
+    for name in ("model.npz", "metadata.json", "metrics.json"):
+        assert mode(version_dir / name) == 0o644

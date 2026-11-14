@@ -75,6 +75,18 @@ def _fsync_write(path: Path, data: str) -> None:
         os.fsync(handle.fileno())
 
 
+def _make_world_readable(root: Path) -> None:
+    """Trainers and the API run as different users sharing one volume.
+
+    mkdtemp and mkstemp create 0700 and 0600 entries, and a strict umask does
+    the same to ordinary files, so an artifact written by one user would be
+    unreadable by the other. Model files are not secret, so open them up.
+    """
+    os.chmod(root, 0o755)
+    for entry in root.iterdir():
+        os.chmod(entry, 0o644)
+
+
 def _check_metrics(metrics: dict[str, Any]) -> None:
     for key in REQUIRED_METRICS:
         value = metrics.get(key)
@@ -128,6 +140,7 @@ def write_version(
         }
         _fsync_write(staging / METADATA_FILE, json.dumps(metadata))
         _fsync_write(staging / METRICS_FILE, json.dumps(metrics, allow_nan=False))
+        _make_world_readable(staging)
         os.replace(staging, target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -149,6 +162,7 @@ def promote_version(model_dir: Path, version: str) -> None:
             handle.write(version)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(tmp_name, 0o644)
         os.replace(tmp_name, model_dir / CURRENT_FILE)
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)

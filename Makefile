@@ -4,7 +4,7 @@ PYTHON ?= python3.11
 VENV ?= .venv
 BIN := $(VENV)/bin
 
-.PHONY: install fmt lint typecheck test check seed run
+.PHONY: install fmt lint typecheck test check seed run docker-build smoke
 
 install:
 	@$(PYTHON) -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 'error: need Python 3.11 (got %d.%d). Install it or run: make install PYTHON=/path/to/python3.11' % sys.version_info[:2])"
@@ -32,3 +32,10 @@ seed:
 
 run:
 	$(BIN)/gunicorn -c app/gunicorn.conf.py app.app:app
+
+docker-build:
+	docker build -f app/Dockerfile --target runtime -t btc-forecast-api:local .
+	docker build -f app/Dockerfile --target seed -t btc-forecast-seed:local .
+
+smoke: docker-build
+	scripts/smoke_test.sh btc-forecast-api:local btc-forecast-seed:local

@@ -82,7 +82,7 @@ Dockerfile pattern (build context is the repo root, `docker build -f app/Dockerf
 - Stage 2 `runtime`: `python:3.11-slim`, copy `/opt/venv` only, copy `app/` and `src/` into `/app`, `useradd -u 10001`, `USER 10001`, `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MODEL_DIR=/app/models`, `WORKDIR /app`, `EXPOSE 5000`.
 - `HEALTHCHECK` uses `python -c "urllib.request.urlopen(...)"` since slim has no curl.
 - `CMD ["gunicorn","-c","app/gunicorn.conf.py","app.app:app"]` in exec form so SIGTERM reaches gunicorn.
-- Python 3.11, not the 3.10 in the spec example: numpy 2.x requires 3.11 or newer.
+- Python 3.11, not the 3.10 in the spec example: numpy 2.3 and 2.4 need 3.11 or newer. numpy is pinned to 2.4.6 because numpy 2.5 has no Python 3.11 wheels. Moving to a newer numpy means moving the Dockerfile, CI and Makefile to 3.12 together.
 
 Compose:
 

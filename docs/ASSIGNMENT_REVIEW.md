@@ -63,52 +63,42 @@ Run command differs from the spec example: from the repo root use `gunicorn -c a
 
 ## 4. Roadmap
 
-### Part B: Docker, Compose, CI/CD (branch `part-b/containers-ci`)
+### Part B: Docker, Compose, CI/CD (branch `part-b/containers-ci`, implemented)
 
-Files:
+Files: `app/Dockerfile`, `.dockerignore`, `docker-compose.yml`, `.env.example`, `.github/workflows/ci_cd.yml`, `.github/dependabot.yml`, `scripts/check_api.sh`, `scripts/smoke_test.sh`, `dags/.gitkeep`.
 
-```
-app/Dockerfile
-.dockerignore
-docker-compose.yml
-.github/workflows/ci_cd.yml
-```
+Decisions:
 
-Build order: Dockerfile, run it, Compose, CI, CD.
+- Registry is GHCR, authenticated with the built-in `GITHUB_TOKEN`. No long-lived password in repo secrets. Switching to Docker Hub means changing the login step to `DOCKER_USERNAME` and a Docker Hub access token (never the account password) and the `IMAGE` env. After the first push, set the package visibility to public in GitHub (Packages, Package settings) or the "public link" deliverable fails.
+- Dockerfile stages: `builder`, `base`, `seed` (synthetic model generator, for CI and local only), `runtime` (last, so it is the default target). Non-root uid 10001, exec-form CMD, HEALTHCHECK without curl, build context is the repo root.
+- Compose: `api` mounts the model volume read-only, with a read-only root filesystem, all capabilities dropped and `no-new-privileges`. `seed` and the Airflow stack sit behind profiles. Airflow runs as a single `standalone` container to fit a 16 GB laptop. Training dependencies are not installed in it.
+- CI: `quality` job (black, flake8, mypy, pytest with coverage, shellcheck, compose config) then `image` job (build, container smoke test, push only on `main`). PRs never push. Tags: full commit SHA and `latest`.
+- Smoke test checks uid 10001, cold start (`/health` 200, `/ready` 503 with an empty volume), warm start after seeding, and an image size limit of 300 MB.
 
-Dockerfile pattern (build context is the repo root, `docker build -f app/Dockerfile .`):
+What was verified before opening the PR (in a sandbox that cannot pull base images):
 
-- Stage 1 `builder`: `python:3.11-slim`, create `/opt/venv`, `pip install --no-cache-dir -r app/requirements.txt`. Copy requirements before source for layer caching.
-- Stage 2 `runtime`: `python:3.11-slim`, copy `/opt/venv` only, copy `app/` and `src/` into `/app`, `useradd -u 10001`, `USER 10001`, `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MODEL_DIR=/app/models`, `WORKDIR /app`, `EXPOSE 5000`.
-- `HEALTHCHECK` uses `python -c "urllib.request.urlopen(...)"` since slim has no curl.
-- `CMD ["gunicorn","-c","app/gunicorn.conf.py","app.app:app"]` in exec form so SIGTERM reaches gunicorn.
-- Python 3.11, not the 3.10 in the spec example: numpy 2.3 and 2.4 need 3.11 or newer. numpy is pinned to 2.4.6 because numpy 2.5 has no Python 3.11 wheels. Moving to a newer numpy means moving the Dockerfile, CI and Makefile to 3.12 together.
+| Check | Result |
+|-------|--------|
+| hadolint on the Dockerfile, actionlint on the workflow, shellcheck on both scripts | clean |
+| `docker compose config` with `.env.example`, and a missing secret fails loudly | pass |
+| Real build context via a `FROM scratch` build | only `app/`, `src/`, `scripts/*.py` |
+| Container layout run from a clean venv with runtime-only dependencies, exact CMD, no `PYTHONPATH` | pass |
+| `check_api.sh` against a live gunicorn, and against a broken API | passes, fails as it should |
+| Part A fix found while designing the volume flow: artifacts were mode 0700 and unreadable by other users | fixed, with a test |
 
-Compose:
+Not verified (needs your machine or the CI run): the actual `docker build` of both images, `scripts/smoke_test.sh`, and the `apache/airflow:3.1.8` image with `standalone` and the Postgres connection. The first real run of these is the PR's CI job. If it fails, paste the log.
 
-- Services: `api`, `postgres`, `airflow-init`, `airflow` (LocalExecutor, official `apache/airflow` image pinned to a version, installed against its constraints file).
-- Named volume `models` shared as `/app/models` on `api` (read-only) and the trainer (read-write).
-- `depends_on` with `condition: service_healthy`. Postgres `healthcheck` with `pg_isready`.
-- Airflow needs about 3 GB. Do not add CeleryExecutor, Redis or the triggerer.
+Failure points to check on the PR:
 
-CI workflow:
+1. `/ready` is 503 right after `docker compose up`: expected until the volume is seeded. Run `docker compose run --rm seed` first.
+2. `PermissionError` on the volume: a fresh named volume copies the image's ownership only on its first writable mount. Seed before the first `up`.
+3. `ModuleNotFoundError: src`: the build context is not the repo root.
+4. Compose errors about missing variables: copy `.env.example` to `.env` first. Interpolation is file-wide, so Airflow secrets are required even for API-only use.
+5. Airflow container restarts: check `docker compose logs airflow`. First suspects are the Fernet key format and the Postgres password.
+6. CI push step running on a PR: it must not. Confirm the `image` job on the PR shows the push steps as skipped.
+7. Image over 300 MB: the smoke test prints the size.
 
-- Triggers: `push` to `main`, `pull_request`. `concurrency` cancels superseded runs. `permissions: contents: read`.
-- Job `test`: Python 3.11, pip cache, `black --check`, `flake8`, `mypy`, `pytest --cov`.
-- Job `image` (needs `test`): buildx with GHA cache. On PRs `push: false`. On `main`, log in with `DOCKER_USERNAME` and `DOCKER_PASSWORD` (use a Docker Hub access token, not the account password), push tags `${{ github.sha }}` and `latest`.
-- Gate the push step with `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`.
-
-Failure points to test before opening the PR:
-
-1. Container starts but `/ready` is 503: expected with an empty volume. Seed the volume and confirm it flips.
-2. `PermissionError` on the volume: uid 10001 cannot write a root-owned volume. Chown in the image or `user:` in Compose.
-3. `ModuleNotFoundError: src`: build context is not the repo root.
-4. Worker boot failure on `/dev/shm`: ensure the container has it (default Docker does).
-5. Postgres not ready when Airflow starts: missing healthcheck dependency.
-6. CI push step runs on PRs: verify the `if` guard by opening a draft PR.
-7. Image size above 200 MB: check `docker images`, confirm only numpy and Flask are installed.
-
-Definition of done: `docker compose up`, then `curl /ready`, `/predict` return 200 with a seeded volume. CI is green on the PR. Image visible in the registry after merge.
+Definition of done: CI green on the PR, `docker compose up` gives a working API with a seeded volume, and after merge the image is visible in GHCR.
 
 ### Part C: ETL, training, DAG, KFP (branch `part-c/airflow-kfp`)
 
@@ -125,7 +115,7 @@ Files: `k8s/{configmap-secret,pvc,deployment,service,hpa,ingress}.yaml`, `k8s/tr
 
 - Single-node Minikube. Enable `ingress` and `metrics-server` addons first.
 - Probes: liveness `/health`, readiness `/ready`, `initialDelaySeconds: 15`, `periodSeconds: 10`.
-- `securityContext`: `runAsNonRoot`, `readOnlyRootFilesystem` with an `emptyDir` for `/dev/shm`, `fsGroup: 10001` so the PVC is writable.
+- `securityContext`: `runAsNonRoot`, `readOnlyRootFilesystem` (`/dev/shm` is already a writable tmpfs in containers, confirm on the cluster), `fsGroup: 10001` so the PVC is writable.
 - Secret holds `RELOAD_TOKEN` as a placeholder. Real value via `kubectl create secret`.
 - Evidence to capture: `get pods,svc,hpa,ingress`, Locust run with `kubectl get hpa --watch`.
 

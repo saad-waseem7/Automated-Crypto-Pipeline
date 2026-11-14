@@ -73,7 +73,7 @@ Decisions:
 - Dockerfile stages: `builder`, `base`, `seed` (synthetic model generator, for CI and local only), `runtime` (last, so it is the default target). Non-root uid 10001, exec-form CMD, HEALTHCHECK without curl, build context is the repo root.
 - Compose: `api` mounts the model volume read-only, with a read-only root filesystem, all capabilities dropped and `no-new-privileges`. `seed` and the Airflow stack sit behind profiles. Airflow runs as a single `standalone` container to fit a 16 GB laptop. Training dependencies are not installed in it.
 - CI: `quality` job (black, flake8, mypy, pytest with coverage, shellcheck, compose config) then `image` job (build, container smoke test, push only on `main`). PRs never push. Tags: full commit SHA and `latest`.
-- Smoke test checks uid 10001, cold start (`/health` 200, `/ready` 503 with an empty volume), warm start after seeding, and an image size limit of 300 MB.
+- Smoke test checks uid 10001, cold start (`/health` 200, `/ready` 503 with an empty volume), warm start after seeding, and a limit of 250 MB on the filesystem size inside the image (measured with du, because `docker image inspect` varies by image store).
 
 What was verified before opening the PR (in a sandbox that cannot pull base images):
 
@@ -96,7 +96,7 @@ Failure points to check on the PR:
 4. Compose errors about missing variables: copy `.env.example` to `.env` first. Interpolation is file-wide, so Airflow secrets are required even for API-only use.
 5. Airflow container restarts: check `docker compose logs airflow`. First suspects are the Fernet key format and the Postgres password.
 6. CI push step running on a PR: it must not. Confirm the `image` job on the PR shows the push steps as skipped.
-7. Image over 300 MB: the smoke test prints the size.
+7. Image over the size limit: the smoke test prints the filesystem size and the layer breakdown.
 
 Definition of done: CI green on the PR, `docker compose up` gives a working API with a seeded volume, and after merge the image is visible in GHCR.
 

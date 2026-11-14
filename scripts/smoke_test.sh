@@ -6,13 +6,13 @@
 #   1. the container runs as uid 10001 with a read-only root filesystem
 #   2. cold start: no model on the volume -> /health 200 but /ready 503
 #   3. after seeding the volume the API becomes ready and answers correctly
-#   4. the image stays under MAX_IMAGE_MB (default 300)
+#   4. the image filesystem stays under MAX_IMAGE_MB (default 250)
 set -euo pipefail
 
 RUNTIME_IMAGE="${1:?usage: smoke_test.sh <runtime_image> <seed_image>}"
 SEED_IMAGE="${2:?usage: smoke_test.sh <runtime_image> <seed_image>}"
 PORT="${SMOKE_PORT:-5099}"
-MAX_IMAGE_MB="${MAX_IMAGE_MB:-300}"
+MAX_IMAGE_MB="${MAX_IMAGE_MB:-250}"
 SUFFIX="$$"
 VOLUME="btc-smoke-models-${SUFFIX}"
 COLD="btc-smoke-cold-${SUFFIX}"
@@ -47,9 +47,16 @@ wait_for_http() { # url
     fail "$1 never answered"
 }
 
-size_mb=$(($(docker image inspect -f '{{.Size}}' "$RUNTIME_IMAGE") / 1000000))
-echo "image size: ${size_mb} MB (limit ${MAX_IMAGE_MB})"
-[ "$size_mb" -le "$MAX_IMAGE_MB" ] || fail "image is ${size_mb} MB, over ${MAX_IMAGE_MB}"
+# `docker image inspect .Size` depends on the image store (the containerd store and
+# the classic overlay2 store report very different numbers for the same image), so
+# measure the real filesystem inside the image instead. Same result on every host.
+fs_kb=$(docker run --rm --user 0 --entrypoint sh "$RUNTIME_IMAGE" \
+    -c 'du -skx / 2>/dev/null | cut -f1')
+size_mb=$((fs_kb / 1024))
+reported_mb=$(($(docker image inspect -f '{{.Size}}' "$RUNTIME_IMAGE") / 1000000))
+echo "image filesystem size: ${size_mb} MB (limit ${MAX_IMAGE_MB}); docker reports ${reported_mb} MB, which varies by image store"
+docker history --format '{{.Size}}\t{{.CreatedBy}}' "$RUNTIME_IMAGE" | cut -c1-110
+[ "$size_mb" -le "$MAX_IMAGE_MB" ] || fail "image filesystem is ${size_mb} MB, over ${MAX_IMAGE_MB}"
 
 docker volume create "$VOLUME" >/dev/null
 # A fresh named volume copies the image's /app/models ownership only on its first

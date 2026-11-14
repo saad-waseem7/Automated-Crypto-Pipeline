@@ -15,7 +15,9 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 # Requirements first so this layer is reused until dependencies change.
 COPY app/requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+# pip and setuptools are only needed to install; dropping them saves about 25 MB.
+RUN pip install -r /tmp/requirements.txt \
+    && pip uninstall -y pip setuptools
 
 # ---- base: shared runtime foundation, no pip, no compilers ----
 FROM python:${PYTHON_VERSION}-slim AS base

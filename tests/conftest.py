@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from flask.testing import FlaskClient
 
 from app.app import create_app
 from app.config import Settings
+from scripts.fake_binance import FakeBinance
 from scripts.seed_artifacts import synthetic_closes
 from src.artifacts import write_version
 from src.forecast_core import FloatArray, evaluate_holdout, fit_ridge
@@ -74,3 +75,9 @@ def empty_client(tmp_path: Path) -> FlaskClient:
 @pytest.fixture
 def history(closes: FloatArray) -> list[float]:
     return [float(v) for v in np.asarray(closes)[-40:]]
+
+
+@pytest.fixture
+def fake_binance() -> Iterator[FakeBinance]:
+    with FakeBinance(n_days=1200) as server:
+        yield server

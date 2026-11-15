@@ -12,7 +12,7 @@ See [docs/ASSIGNMENT_REVIEW.md](docs/ASSIGNMENT_REVIEW.md) for the spec critique
 |------|-------|-------|
 | A | Flask API, gunicorn, pytest | In review |
 | B | Docker, Compose, GitHub Actions | In review |
-| C | Airflow, ETL, training, Kubeflow | Planned |
+| C | Airflow, ETL, training, Kubeflow | In review |
 | D | Kubernetes | Planned |
 | E | Verification and report | Planned |
 
@@ -42,6 +42,26 @@ scripts/check_api.sh                    # black-box checks against the running A
 docker compose --profile airflow up -d  # optional: Postgres and Airflow on :8080
 make smoke                              # full container smoke test
 ```
+
+## Run the pipeline
+
+```bash
+# Offline, with synthetic prices (what CI does):
+python -m scripts.fake_binance --port 8765 &
+export BINANCE_BASE_URLS=http://127.0.0.1:8765
+python -m src.etl_fetch && python -m src.features && python -m src.train_forecast
+
+# Real data (needs internet, no API key):
+unset BINANCE_BASE_URLS
+python -m src.etl_fetch && python -m src.features && python -m src.train_forecast
+cat data/reports/last_train.json
+
+# Full stack with Airflow (needs real secrets in .env, see .env.example):
+docker compose --profile airflow up -d --build
+docker compose exec airflow airflow dags trigger btc_etl_pipeline
+```
+
+Kubeflow: `pip install -r requirements-kfp.txt && python kubeflow/btc_kfp_pipeline.py` recompiles `kubeflow/btc_kfp_pipeline.yaml`.
 
 ## API
 

@@ -1,0 +1,138 @@
+# PIPELINE DEFINITION
+# Name: btc-forecast-pipeline
+# Description: Ingest BTC-USDT data, build features, train and evaluate the 7-day close forecaster.
+components:
+  comp-build-features:
+    executorLabel: exec-build-features
+    inputDefinitions:
+      artifacts:
+        raw_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        features:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-ingest-data:
+    executorLabel: exec-ingest-data
+    outputDefinitions:
+      artifacts:
+        raw_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        features:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        report:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-build-features:
+      container:
+        args:
+        - --raw-path
+        - '{{$.inputs.artifacts[''raw_data''].path}}'
+        - --out-path
+        - '{{$.outputs.artifacts[''features''].path}}'
+        command:
+        - python
+        - -m
+        - src.features
+        image: ghcr.io/saad-waseem7/automated-crypto-pipeline:latest
+    exec-ingest-data:
+      container:
+        args:
+        - --raw-path
+        - '{{$.outputs.artifacts[''raw_data''].path}}'
+        command:
+        - python
+        - -m
+        - src.etl_fetch
+        image: ghcr.io/saad-waseem7/automated-crypto-pipeline:latest
+    exec-train-model:
+      container:
+        args:
+        - --features-path
+        - '{{$.inputs.artifacts[''features''].path}}'
+        - --model-dir
+        - '{{$.outputs.artifacts[''model''].path}}'
+        - --report-path
+        - '{{$.outputs.artifacts[''report''].path}}'
+        command:
+        - python
+        - -m
+        - src.train_forecast
+        image: ghcr.io/saad-waseem7/automated-crypto-pipeline:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 1.0
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 1G
+pipelineInfo:
+  description: Ingest BTC-USDT data, build features, train and evaluate the 7-day
+    close forecaster.
+  name: btc-forecast-pipeline
+root:
+  dag:
+    tasks:
+      build-features:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-build-features
+        dependentTasks:
+        - ingest-data
+        inputs:
+          artifacts:
+            raw_data:
+              taskOutputArtifact:
+                outputArtifactKey: raw_data
+                producerTask: ingest-data
+        taskInfo:
+          name: build-features
+      ingest-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-ingest-data
+        retryPolicy:
+          backoffDuration: 60s
+          backoffFactor: 2.0
+          backoffMaxDuration: 3600s
+          maxRetryCount: 2
+        taskInfo:
+          name: ingest-data
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - build-features
+        inputs:
+          artifacts:
+            features:
+              taskOutputArtifact:
+                outputArtifactKey: features
+                producerTask: build-features
+        taskInfo:
+          name: train-model
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.18.0

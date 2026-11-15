@@ -13,7 +13,7 @@ Part A is implemented on branch `part-a/flask-api`.
 | 4 | Liveness and readiness both use `/health` (D3) | With an empty PVC on first deploy there is no model. If `/health` fails, liveness kills the pod forever. If it passes, readiness lets traffic hit a 503. | `/health` is liveness and always 200. `/ready` returns 503 until a model loads. Point D3 readiness at `/ready` and justify it in the report. |
 | 5 | HPA `minReplicas: 2` vs Deployment `replicas: 3` | HPA scales to 2 after the stabilization window and `kubectl apply` fights it | Keep 3 in the manifest as required and document the scale-down to 2 in the report. |
 | 6 | `/metrics` | Reads as the Prometheus endpoint but the spec wants model metrics as JSON | JSON, as specified. Prometheus format is out of scope. |
-| 7 | Promotion on "threshold criteria" with a 7-day test window (C1) | n=7 of a near random walk is noise. An absolute MAPE threshold either always passes or never does. | Walk-forward backtest over 60+ origins, scored against a naive baseline on the same origins. Promote only if not worse than the baseline and not worse than the incumbent. |
+| 7 | Promotion on "threshold criteria" with a 7-day test window (C1) | n=7 of a near random walk is noise. An absolute MAPE threshold either always passes or never does. | Backtest over 60 origins, scored against a naive baseline on the same origins. Promote only if the candidate is not worse than the baseline by more than 5 percent (relative MAPE). No incumbent comparison: overlapping windows would favor the incumbent, which saw part of the data. |
 | 8 | Airflow, statsmodels, xgboost, prophet in one environment (section 3) | Airflow needs a constraints file. Combined resolution fails or downgrades things silently. Prophet pulls cmdstan, hundreds of MB. | Separate images. Airflow image has no ML libs. Training runs in its own image. Prophet is not used. |
 | 9 | Full Kubeflow on a 16 GB, no GPU laptop | Kubeflow plus Minikube plus Airflow plus Docker does not fit | C2 only requires authoring and compiling to YAML. Compile, do not deploy. State this in the report. |
 | 10 | `MODEL_STAGE` config, "register model artifacts" | Implies an MLflow registry that is not in scope | File registry: versioned dirs plus `CURRENT`. `MODEL_STAGE` is a label only. |
@@ -100,14 +100,43 @@ Failure points to check on the PR:
 
 Definition of done: CI green on the PR, `docker compose up` gives a working API with a seeded volume, and after merge the image is visible in GHCR.
 
-### Part C: ETL, training, DAG, KFP (branch `part-c/airflow-kfp`)
+### Part C: ETL, training, DAG, KFP (branch `part-c/etl-train-dags`, implemented)
 
-Files: `src/etl_fetch.py`, `src/train_forecast.py`, `dags/btc_etl_pipeline.py`, `kubeflow/btc_kfp_pipeline.py`, `requirements-train.txt`, `Dockerfile.train`.
+Files: `src/etl_fetch.py`, `src/features.py`, `src/train_forecast.py`, `dags/btc_etl_pipeline.py`, `kubeflow/btc_kfp_pipeline.py` and its compiled `.yaml`, `airflow/Dockerfile`, `scripts/fake_binance.py`, `requirements-kfp.txt`, compose and CI changes.
 
-- ETL is idempotent: write `data/raw/btc_YYYY-MM-DD.parquet` keyed by the logical date, upsert by date, drop the partial current-day candle.
-- Train calls `fit_ridge`, runs `evaluate_holdout`, applies the promotion rule (section 1, item 7), then `write_version` and `prune_versions(keep=5)`.
-- DAG tasks: fetch, preprocess, train and evaluate, reload hint. Tasks pass file paths, never dataframes through XCom. `catchup=False`, retries with backoff, `max_active_runs=1`. The reload task tolerates failure because polling converges anyway.
-- KFP: container components, `compiler.Compiler().compile(...)` to YAML. Commit the YAML. Do not deploy.
+Data flow: Binance klines, `raw/btc_usdt_1d.csv`, `processed/features.csv`, `models/versions/<v>` plus `CURRENT`, then the API (by polling, plus a best-effort reload call).
+
+Decisions and deviations:
+
+- Data source is Binance public klines only, with `data-api.binance.vision` as the fallback host. yfinance was dropped from the plan: it adds a heavy dependency tree and is an unofficial scraper. The assignment accepts any one source.
+- Only closed candles are stored (the open one is dropped), the raw CSV is upserted by UTC date, and writes are atomic. Re-running is safe.
+- Features (MA7, MA30, volatility, targets) are computed as the assignment requires and written to `features.csv`. The ridge model itself uses lagged log-returns only, so the indicators document and sanity-check the series but are not model inputs.
+- Training fits a candidate on data before the last 60 forecast origins, scores it against the naive baseline on those origins, and promotes only if it is not worse than the baseline by more than 5 percent. It then refits on all data for serving. A rejected model publishes nothing and the old one keeps serving. Both outcomes exit 0 and write a JSON report; only unusable data is a failure.
+- Airflow tasks run our scripts with a separate venv (numpy only) baked into `airflow/Dockerfile`, not Airflow's interpreter. Airflow is pinned to 3.1.8 on Python 3.11, the same as the API image.
+- The reload task is best effort. If it fails, the API still switches within its poll interval.
+- Kubeflow: three container components using the same image CI publishes. The YAML is compiled and checked in CI for drift but not deployed.
+- The same runtime image runs the API and the training scripts, so Part D can reuse it for a Kubernetes Job.
+
+Verified:
+
+| Check | Result |
+|-------|--------|
+| 180 pytest tests at 98 percent coverage, including fetch, features, train and serve end to end | pass |
+| Real Airflow 3.1.8 `dags test` with fake Binance and a live API: all 4 tasks succeed, reload reaches the API | pass |
+| Kubeflow spec compiled with kfp 2.18.0, two compiles byte-identical | pass |
+| actionlint, hadolint, shellcheck, `docker compose config` | clean |
+
+Not verified until the PR's CI runs: the Airflow image build (tag `apache/airflow:3.1.8-python3.11`), the DAG inside that image, volume permissions between uid 50000 and 10001, and the compose `airflow` profile.
+
+Not verifiable in the sandbox: a run against the real Binance API. Run `python -m src.etl_fetch` on your machine once to confirm.
+
+Failure points:
+
+1. The gate rejects the model on real data: the report says `rejected` and the old model keeps serving. Check `data/reports/last_train.json`. Raising `--tolerance` is a policy choice, not a fix.
+2. HTTP 451 from Binance: the fallback host is tried automatically. If both fail, the task fails and Airflow retries with backoff.
+3. A gap longer than 3 days in the series stops preprocessing instead of inventing data.
+4. Airflow cannot write the volumes: `init-volumes` must complete first (it runs as root and fixes ownership).
+5. DAG not visible in the UI: Airflow 3 shows DAGs only after the dag-processor parses them. Wait about 30 seconds or check `docker compose logs airflow`.
 
 ### Part D: Kubernetes (branch `part-d/k8s`)
 

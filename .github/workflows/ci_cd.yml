@@ -56,9 +56,94 @@ jobs:
       - name: Validate docker compose file
         run: docker compose --env-file .env.example --profile airflow --profile seed config -q
 
+  kubeflow:
+    name: Kubeflow spec is up to date
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-kfp.txt
+
+      - run: pip install -r requirements-kfp.txt
+
+      - name: Compile the pipeline
+        run: python kubeflow/btc_kfp_pipeline.py
+
+      - name: Committed YAML must match the compiled output
+        run: git diff --exit-code -- kubeflow/btc_kfp_pipeline.yaml
+
+  airflow-e2e:
+    name: Airflow DAG end-to-end
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TOKEN: ci-token-0123456789
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      # numpy is only needed by the fake Binance server that runs on the host.
+      - run: pip install -r app/requirements.txt
+
+      - name: Build the API and Airflow images
+        run: |
+          docker build -f app/Dockerfile --target runtime -t btc-forecast-api:ci .
+          docker build -f airflow/Dockerfile -t btc-forecast-airflow:ci .
+
+      - name: Start the fake Binance server and the API (no model yet)
+        run: |
+          mkdir -p "$RUNNER_TEMP/models" "$RUNNER_TEMP/data"
+          chmod 1777 "$RUNNER_TEMP/models" "$RUNNER_TEMP/data"
+          nohup python -m scripts.fake_binance --port 8765 --days 1500 > "$RUNNER_TEMP/fake.log" 2>&1 &
+          docker run -d --name api --network host \
+            -v "$RUNNER_TEMP/models:/app/models:ro" \
+            -e RELOAD_TOKEN="$TOKEN" -e MODEL_POLL_SECONDS=1 \
+            btc-forecast-api:ci
+          for _ in $(seq 1 30); do curl -fs localhost:5000/health >/dev/null && break; sleep 1; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' localhost:5000/ready)
+          test "$code" = "503" || { echo "expected /ready 503 before training, got $code"; exit 1; }
+
+      - name: Run the DAG in a real Airflow
+        run: |
+          docker run --rm --network host \
+            -e BINANCE_BASE_URLS=http://127.0.0.1:8765 \
+            -e MODEL_DIR=/models -e BTC_DATA_DIR=/data \
+            -e API_RELOAD_URL=http://127.0.0.1:5000/reload -e RELOAD_TOKEN="$TOKEN" \
+            -e AIRFLOW__CORE__LOAD_EXAMPLES=false \
+            -v "$RUNNER_TEMP/models:/models" -v "$RUNNER_TEMP/data:/data" \
+            -v "$PWD/src:/opt/airflow/project/src:ro" -v "$PWD/dags:/opt/airflow/dags:ro" \
+            btc-forecast-airflow:ci \
+            bash -c "airflow db migrate && airflow dags test btc_etl_pipeline"
+
+      - name: The API must now serve the model Airflow trained
+        run: |
+          test -s "$RUNNER_TEMP/models/CURRENT"
+          grep -q '"status": "promoted"' "$RUNNER_TEMP/data/reports/last_train.json"
+          scripts/check_api.sh http://127.0.0.1:5000
+          curl -fs localhost:5000/metrics | python -c "import json,sys; m=json.load(sys.stdin)['metrics']; assert m['data_source']=='binance:BTCUSDT', m"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          docker logs api || true
+          cat "$RUNNER_TEMP/fake.log" || true
+          find "$RUNNER_TEMP/models" "$RUNNER_TEMP/data" | head -50
+
   image:
     name: Build, smoke test, publish
-    needs: quality
+    needs: [quality, kubeflow, airflow-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

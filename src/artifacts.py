@@ -64,8 +64,9 @@ def validate_version(version: str) -> str:
 
 
 def new_version_name(now: datetime | None = None) -> str:
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-    return stamp
+    # Microseconds keep two promotions in the same second from colliding, and the
+    # fixed-width stamp still sorts chronologically.
+    return (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 def _fsync_write(path: Path, data: str) -> None:

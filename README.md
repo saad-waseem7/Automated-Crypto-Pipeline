@@ -13,7 +13,7 @@ See [docs/ASSIGNMENT_REVIEW.md](docs/ASSIGNMENT_REVIEW.md) for the spec critique
 | A | Flask API, gunicorn, pytest | In review |
 | B | Docker, Compose, GitHub Actions | In review |
 | C | Airflow, ETL, training, Kubeflow | In review |
-| D | Kubernetes | Planned |
+| D | Kubernetes (manifests, HPA, ingress, load test, kind CI) | In review |
 | E | Verification and report | Planned |
 
 ## Quick start (Ubuntu, Python 3.11 exactly, to match Docker and CI)
@@ -95,4 +95,6 @@ app/    Flask service
 src/    numpy forecaster and artifact contract, shared by training and serving
 tests/  pytest suite
 scripts/seed_artifacts.py   synthetic model for smoke tests
+k8s/    Kubernetes manifests (kustomize), see docs/ASSIGNMENT_REVIEW.md for the runbook
+loadtest/   Locust file
 ```

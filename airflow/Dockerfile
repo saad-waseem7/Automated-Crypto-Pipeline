@@ -7,7 +7,7 @@
 # hundreds of dependencies and installing ours beside them invites conflicts.
 # The venv uses the same requirements file as the API image, so training and
 # serving run identical library versions.
-FROM apache/airflow:3.1.8-python3.11
+FROM apache/airflow:3.4.0-python3.11
 
 COPY --chown=airflow:0 app/requirements.txt /tmp/requirements.txt
 RUN python -m venv /opt/airflow/train-venv \

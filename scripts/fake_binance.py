@@ -74,12 +74,14 @@ class FakeBinance:
         fail_first: int = 0,
         status: int | None = None,
         port: int = 0,
+        host: str = "127.0.0.1",
     ) -> None:
         self.klines = _build_klines(n_days, seed)
         self.fail_first = fail_first
         self.status = status
         self.requests = 0
         self._port = port
+        self._host = host
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -127,7 +129,7 @@ class FakeBinance:
 
     def start(self) -> FakeBinance:
         self._server = ThreadingHTTPServer(
-            ("127.0.0.1", self._port), self._make_handler()
+            (self._host, self._port), self._make_handler()
         )
         self._thread = threading.Thread(
             target=self._server.serve_forever,
@@ -160,8 +162,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--days", type=int, default=1500)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind address (0.0.0.0 to reach it from containers)",
+    )
     args = parser.parse_args(argv)
-    server = FakeBinance(args.days, port=args.port).start()
+    server = FakeBinance(args.days, port=args.port, host=args.host).start()
     print(f"fake Binance listening on {server.base_url}", flush=True)
     try:
         threading.Event().wait()

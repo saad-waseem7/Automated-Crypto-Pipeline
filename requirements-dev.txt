@@ -4,3 +4,4 @@ pytest-cov==7.1.0
 black==26.10.1
 flake8==7.5.0
 mypy==2.4.1
+kubernetes-validate==1.37.0

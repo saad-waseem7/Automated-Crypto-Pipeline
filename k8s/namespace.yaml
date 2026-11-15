@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: btc-forecast
+  labels:
+    app.kubernetes.io/part-of: btc-forecast
+    pod-security.kubernetes.io/enforce: restricted

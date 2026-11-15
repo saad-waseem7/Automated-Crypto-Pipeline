@@ -1,0 +1,13 @@
+# RWO is enough on a single-node cluster (Minikube). On a multi-node cluster the
+# API pods and the training job could land on different nodes and the claim
+# would not attach: use an RWX class (NFS, EFS) or object storage there.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: btc-models
+  namespace: btc-forecast
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

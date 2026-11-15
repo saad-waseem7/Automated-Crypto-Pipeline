@@ -141,9 +141,129 @@ jobs:
           cat "$RUNNER_TEMP/fake.log" || true
           find "$RUNNER_TEMP/models" "$RUNNER_TEMP/data" | head -50
 
+  k8s-e2e:
+    name: Kubernetes end to end (kind)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NS: btc-forecast
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      - name: Build the image
+        run: docker build -f app/Dockerfile --target runtime -t btc-forecast-api:ci .
+
+      - name: Create the kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: btc
+          config: .github/kind-config.yaml
+
+      - name: Load the image into the cluster
+        run: kind load docker-image btc-forecast-api:ci --name btc
+
+      - name: Install ingress-nginx and metrics-server
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+          # kind kubelets use self-signed certificates.
+          kubectl -n kube-system patch deployment metrics-server --type=json \
+            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
+          kubectl -n ingress-nginx wait --for=condition=complete job/ingress-nginx-admission-patch --timeout=120s
+
+      - name: Serve synthetic candles to the cluster
+        run: |
+          # The kind network is dual-stack; the fake server listens on IPv4 only.
+          gateway="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+          test -n "$gateway"
+          echo "GATEWAY=$gateway" >> "$GITHUB_ENV"
+          python -m scripts.fake_binance --host 0.0.0.0 --port 8765 --days 1500 > fake.log 2>&1 &
+          for _ in $(seq 20); do curl -fs "http://127.0.0.1:8765/api/v3/klines?limit=1" >/dev/null && break; sleep 1; done
+
+      - name: Render manifests for CI (local image, fake Binance)
+        run: |
+          cp -r k8s k8s-ci
+          sed -i 's|newTag: .*|newName: btc-forecast-api\n    newTag: ci|' k8s-ci/kustomization.yaml
+          sed -i "s|BINANCE_BASE_URLS: .*|BINANCE_BASE_URLS: \"http://${GATEWAY}:8765\"|" k8s-ci/configmap.yaml
+          cat k8s-ci/kustomization.yaml
+
+      - name: Deploy
+        run: |
+          kubectl apply -f k8s-ci/namespace.yaml
+          kubectl -n "$NS" create secret generic btc-forecast-secret --from-literal=RELOAD_TOKEN=ci-reload-token-0123456789
+          kubectl apply -k k8s-ci
+
+      - name: Pods must not be Ready before a model exists
+        run: |
+          sleep 15
+          ready="$(kubectl -n "$NS" get deploy btc-forecast -o jsonpath='{.status.readyReplicas}')"
+          test -z "$ready" || test "$ready" = "0"
+          kubectl -n "$NS" get pods
+
+      - name: Train in the cluster and wait for readiness
+        run: |
+          kubectl -n "$NS" create job ci-train --from=cronjob/btc-train
+          kubectl -n "$NS" wait --for=condition=complete job/ci-train --timeout=300s \
+            || { kubectl -n "$NS" logs job/ci-train; exit 1; }
+          kubectl -n "$NS" logs job/ci-train | tail -20
+          kubectl -n "$NS" rollout status deployment/btc-forecast --timeout=180s
+          test "$(kubectl -n "$NS" get deploy btc-forecast -o jsonpath='{.status.readyReplicas}')" = "3"
+
+      - name: Predict through the ingress
+        run: |
+          # The controller needs a few seconds to pick up fresh endpoints.
+          curl -sS --retry 15 --retry-all-errors --retry-delay 2 -f -H 'Host: btc-forecast.local' http://127.0.0.1/ready
+          curl -fsS -X POST -H 'Host: btc-forecast.local' http://127.0.0.1/predict \
+            | python -c 'import json,sys; d=json.load(sys.stdin); assert len(d["predictions"])==7, d'
+
+      - name: Self-healing, a deleted pod is replaced without dropped requests
+        run: |
+          victim="$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=btc-forecast -o jsonpath='{.items[0].metadata.name}')"
+          kubectl -n "$NS" delete pod "$victim" --wait=false
+          failures=0
+          for _ in $(seq 40); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Host: btc-forecast.local' http://127.0.0.1/predict)"
+            test "$code" = "200" || failures=$((failures + 1))
+            sleep 0.5
+          done
+          echo "non-200 responses during pod replacement: $failures"
+          test "$failures" -le 2
+          kubectl -n "$NS" rollout status deployment/btc-forecast --timeout=120s
+          test "$(kubectl -n "$NS" get deploy btc-forecast -o jsonpath='{.status.readyReplicas}')" -ge 3
+
+      - name: HPA reports CPU metrics
+        run: |
+          for _ in $(seq 36); do
+            current="$(kubectl -n "$NS" get hpa btc-forecast -o jsonpath='{.status.currentMetrics[0].resource.current.averageUtilization}')"
+            test -n "$current" && break
+            sleep 5
+          done
+          kubectl -n "$NS" get hpa
+          test -n "$current"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$NS" get all,pvc,ingress -o wide || true
+          kubectl -n "$NS" describe pods || true
+          kubectl -n "$NS" get endpoints btc-forecast || true
+          kubectl -n ingress-nginx logs deploy/ingress-nginx-controller --tail=40 || true
+          kubectl -n "$NS" logs -l app.kubernetes.io/name=btc-forecast --tail=50 || true
+          kubectl -n "$NS" logs -l app.kubernetes.io/name=btc-train --tail=50 || true
+
   image:
     name: Build, smoke test, publish
-    needs: [quality, kubeflow, airflow-e2e]
+    needs: [quality, kubeflow, airflow-e2e, k8s-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

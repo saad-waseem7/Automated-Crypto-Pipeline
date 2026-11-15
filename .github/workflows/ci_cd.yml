@@ -221,7 +221,8 @@ jobs:
 
       - name: Predict through the ingress
         run: |
-          curl -fsS -H 'Host: btc-forecast.local' http://127.0.0.1/ready
+          # The controller needs a few seconds to pick up fresh endpoints.
+          curl -sS --retry 15 --retry-all-errors --retry-delay 2 -f -H 'Host: btc-forecast.local' http://127.0.0.1/ready
           curl -fsS -X POST -H 'Host: btc-forecast.local' http://127.0.0.1/predict \
             | python -c 'import json,sys; d=json.load(sys.stdin); assert len(d["predictions"])==7, d'
 
@@ -255,6 +256,8 @@ jobs:
         run: |
           kubectl -n "$NS" get all,pvc,ingress -o wide || true
           kubectl -n "$NS" describe pods || true
+          kubectl -n "$NS" get endpoints btc-forecast || true
+          kubectl -n ingress-nginx logs deploy/ingress-nginx-controller --tail=40 || true
           kubectl -n "$NS" logs -l app.kubernetes.io/name=btc-forecast --tail=50 || true
           kubectl -n "$NS" logs -l app.kubernetes.io/name=btc-train --tail=50 || true
 

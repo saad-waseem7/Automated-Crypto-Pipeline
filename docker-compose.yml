@@ -74,25 +74,58 @@ services:
     profiles: ["airflow"]
     restart: unless-stopped
 
+  # One-shot: make the shared volumes writable by Airflow (uid 50000). The model
+  # volume stays world-writable with the sticky bit so the API user (10001) and
+  # Airflow can both use it. Local development only, Kubernetes uses fsGroup.
+  init-volumes:
+    image: busybox:1.37
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p /data/raw /data/processed /data/reports
+        && chown -R 50000:0 /data
+        && chmod 1777 /models
+    volumes:
+      - models:/models
+      - btc-data:/data
+    profiles: ["airflow"]
+
   # Single-container Airflow (api-server, scheduler, dag-processor, triggerer).
   # Chosen over the multi-service layout to stay inside a 16 GB laptop budget.
-  # Python task dependencies are NOT installed here: training runs in its own
-  # image (Part C), which keeps Airflow's pinned dependency set intact.
+  # Our code runs in a separate venv baked into this image (see airflow/Dockerfile).
   airflow:
-    image: apache/airflow:3.1.8
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    image: btc-forecast-airflow:local
     command: standalone
     environment:
       <<: *airflow-env
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      BTC_PROJECT_DIR: /opt/airflow/project
+      BTC_DATA_DIR: /opt/airflow/data
+      MODEL_DIR: /models
+      API_RELOAD_URL: http://api:5000/reload
+      RELOAD_TOKEN: ${RELOAD_TOKEN:?set RELOAD_TOKEN in .env}
+      BINANCE_BASE_URLS: ${BINANCE_BASE_URLS:-}
     ports:
       - "8080:8080"
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/project/src:ro
+      - models:/models
+      - btc-data:/opt/airflow/data
     depends_on:
       postgres:
         condition: service_healthy
+      init-volumes:
+        condition: service_completed_successfully
     profiles: ["airflow"]
     restart: unless-stopped
 
 volumes:
   models:
   pgdata:
+  btc-data:

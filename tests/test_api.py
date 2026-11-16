@@ -28,6 +28,12 @@ class TestHealthAndReady:
         assert body["model_version"] == "v1"
         assert body["uptime_seconds"] >= 0
 
+    def test_json_responses_carry_security_headers(self, client: FlaskClient) -> None:
+        response = client.get("/health")
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Cache-Control"] == "no-store"
+        assert client.get("/nope").headers["X-Content-Type-Options"] == "nosniff"
+
     def test_health_without_model_is_still_200(self, empty_client: FlaskClient) -> None:
         response = empty_client.get("/health")
         assert response.status_code == 200

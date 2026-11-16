@@ -46,16 +46,18 @@ spec:
                 - configMapRef:
                     name: btc-forecast-config
               env:
+                # Historical data lives on the same claim as the models (under
+                # data/, which the API ignores), so later runs fetch only new days.
                 - name: BTC_RAW_PATH
-                  value: /work/raw/btc_usdt_1d.csv
+                  value: /app/models/data/raw/btc_usdt_1d.csv
                 - name: BTC_FEATURES_PATH
-                  value: /work/processed/features.csv
+                  value: /app/models/data/processed/features.csv
                 - name: BTC_REPORT_PATH
-                  value: /work/reports/last_train.json
+                  value: /app/models/data/reports/last_train.json
               resources:
                 requests:
-                  cpu: 250m
-                  memory: 256Mi
+                  cpu: 100m
+                  memory: 128Mi
                 limits:
                   cpu: "1"
                   memory: 512Mi
@@ -67,13 +69,7 @@ spec:
               volumeMounts:
                 - name: models
                   mountPath: /app/models
-                - name: work
-                  mountPath: /work
           volumes:
             - name: models
               persistentVolumeClaim:
                 claimName: btc-models
-            # Raw candles are re-fetched from 2017 each run (about 10 requests).
-            - name: work
-              emptyDir:
-                sizeLimit: 64Mi

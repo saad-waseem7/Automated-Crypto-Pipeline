@@ -70,16 +70,40 @@ def test_ingress_and_hpa_point_at_existing_objects() -> None:
     assert hpa["metrics"][0]["resource"]["target"]["averageUtilization"] == 60
 
 
-def test_deployment_probes_and_resources() -> None:
+def test_deployment_matches_the_assignment_spec() -> None:
     deployment = one("Deployment")
-    assert deployment["spec"]["replicas"] == 3
+    assert deployment["spec"]["replicas"] >= 3
     container = deployment["spec"]["template"]["spec"]["containers"][0]
-    assert container["livenessProbe"]["httpGet"]["path"] == "/health"
+    live = container["livenessProbe"]
+    assert live["httpGet"]["path"] == "/health"
+    assert live["initialDelaySeconds"] == 15 and live["periodSeconds"] == 10
+    # Readiness deliberately uses /ready: 503 until a model is loaded.
     assert container["readinessProbe"]["httpGet"]["path"] == "/ready"
-    resources = container["resources"]
-    assert resources["requests"]["cpu"] and resources["limits"]["memory"]
-    # HPA utilisation is relative to the CPU request, so it must be set.
-    assert "cpu" in resources["requests"]
+    assert container["resources"] == {
+        "requests": {"cpu": "100m", "memory": "128Mi"},
+        "limits": {"cpu": "500m", "memory": "512Mi"},
+    }
+    assert container["volumeMounts"][0]["mountPath"] == "/app/models"
+
+
+def test_config_and_secret_are_injected_as_environment() -> None:
+    config = one("ConfigMap")["data"]
+    assert {"MODEL_STAGE", "LOG_LEVEL", "PORT"} <= config.keys()
+    secret = one("Secret")
+    assert secret["stringData"]["RELOAD_TOKEN"] == "", "never commit a real token"
+    container = one("Deployment")["spec"]["template"]["spec"]["containers"][0]
+    assert container["envFrom"][0]["configMapRef"]["name"] == (
+        one("ConfigMap")["metadata"]["name"]
+    )
+    ref = container["env"][0]["valueFrom"]["secretKeyRef"]
+    assert ref["name"] == secret["metadata"]["name"] and ref["key"] == "RELOAD_TOKEN"
+
+
+def test_disruption_budget_selects_the_deployment() -> None:
+    pdb = one("PodDisruptionBudget")["spec"]
+    labels = one("Deployment")["spec"]["template"]["metadata"]["labels"]
+    assert pdb["selector"]["matchLabels"].items() <= labels.items()
+    assert pdb["maxUnavailable"] == 1
 
 
 @pytest.mark.parametrize("kind", ["Deployment", "CronJob"])
@@ -132,3 +156,10 @@ def test_kustomization_pins_image_to_a_commit_sha() -> None:
     assert re.fullmatch(r"[0-9a-f]{40}", image["newTag"])
     listed = set(kustomization["resources"])
     assert listed == {p.name for p in FILES}
+
+
+def test_training_job_keeps_data_on_the_models_claim() -> None:
+    spec = one("CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    env = {e["name"]: e["value"] for e in spec["containers"][0]["env"]}
+    assert all(v.startswith("/app/models/data/") for v in env.values())
+    assert [v["name"] for v in spec["volumes"]] == ["models"]

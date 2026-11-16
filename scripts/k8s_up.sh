@@ -16,13 +16,24 @@ if [[ "${USE_MINIKUBE:-1}" == "1" ]]; then
 fi
 
 kubectl apply -f k8s/namespace.yaml
-if ! kubectl -n "$NS" get secret btc-forecast-secret >/dev/null 2>&1; then
+
+# Keep an existing reload token across re-runs: applying k8s/configmap-secret.yaml
+# resets it to the committed empty value, so read it first and restore it after.
+token="$(kubectl -n "$NS" get secret btc-forecast-secret \
+  -o jsonpath='{.data.RELOAD_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+fresh=0
+if [[ -z "$token" ]]; then
   token="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  kubectl -n "$NS" create secret generic btc-forecast-secret \
-    --from-literal=RELOAD_TOKEN="$token"
+  fresh=1
 fi
 
 kubectl apply -k k8s
+kubectl -n "$NS" patch secret btc-forecast-secret --type merge \
+  -p "{\"stringData\":{\"RELOAD_TOKEN\":\"${token}\"}}"
+# Pods read the token at start, so only a newly generated one needs a restart.
+if [[ "$fresh" == "1" ]]; then
+  kubectl -n "$NS" rollout restart deployment/btc-forecast
+fi
 
 # No model exists on a fresh volume: run one training job now instead of waiting
 # for the nightly schedule. Pods stay Ready=false until it finishes.

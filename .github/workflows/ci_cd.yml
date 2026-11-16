@@ -194,13 +194,12 @@ jobs:
         run: |
           cp -r k8s k8s-ci
           sed -i 's|newTag: .*|newName: btc-forecast-api\n    newTag: ci|' k8s-ci/kustomization.yaml
-          sed -i "s|BINANCE_BASE_URLS: .*|BINANCE_BASE_URLS: \"http://${GATEWAY}:8765\"|" k8s-ci/configmap.yaml
+          sed -i "s|BINANCE_BASE_URLS: .*|BINANCE_BASE_URLS: \"http://${GATEWAY}:8765\"|" k8s-ci/configmap-secret.yaml
           cat k8s-ci/kustomization.yaml
 
       - name: Deploy
         run: |
           kubectl apply -f k8s-ci/namespace.yaml
-          kubectl -n "$NS" create secret generic btc-forecast-secret --from-literal=RELOAD_TOKEN=ci-reload-token-0123456789
           kubectl apply -k k8s-ci
 
       - name: Pods must not be Ready before a model exists

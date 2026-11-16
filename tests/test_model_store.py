@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from app.model_store import ModelStore
 from src.artifacts import promote_version
 
@@ -90,3 +92,27 @@ def test_unreadable_current_is_recorded(tmp_path: Path) -> None:
     store = ModelStore(tmp_path, poll_seconds=0)
     assert store.get() is None
     assert store.last_error is not None
+
+
+def test_first_model_is_picked_up_immediately_despite_poll_interval(
+    tmp_path: Path, publish: Publish
+) -> None:
+    clock = FakeClock()
+    store = ModelStore(tmp_path, poll_seconds=10, clock=clock)
+    assert store.get() is None  # polled at t=1000 with nothing published
+
+    publish(tmp_path, "v1")
+    clock.now += 1  # well inside the 10 s interval
+    bundle = store.get()
+    assert bundle is not None and bundle.version == "v1"
+
+
+def test_repeated_identical_failure_is_logged_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "CURRENT").write_text("../bad")
+    store = ModelStore(tmp_path, poll_seconds=10)
+    with caplog.at_level("ERROR", logger="app.model_store"):
+        for _ in range(5):
+            assert store.get() is None
+    assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 1

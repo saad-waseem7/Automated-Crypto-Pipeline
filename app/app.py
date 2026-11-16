@@ -100,6 +100,10 @@ def create_app(
             response.status_code,
             elapsed_ms,
         )
+        # Responses are JSON for API clients: stop MIME sniffing and caching of
+        # predictions by shared proxies.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Cache-Control", "no-store")
         return response
 
     @app.get("/health")

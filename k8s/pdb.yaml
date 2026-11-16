@@ -1,0 +1,13 @@
+# Keeps at least 2 pods serving during voluntary disruptions (node drain,
+# cluster upgrade). maxUnavailable, not minAvailable, so it never blocks a drain
+# when the HPA is at its 2-replica floor.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: btc-forecast
+  namespace: btc-forecast
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: btc-forecast

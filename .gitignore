@@ -12,3 +12,9 @@ data/
 *.egg-info/
 .idea/
 .vscode/
+loadtest/results*
+k8s-ci/
+fake.log
+logs.txt
+.env.*
+!.env.example

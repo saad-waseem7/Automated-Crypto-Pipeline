@@ -3,11 +3,12 @@ kind: Kustomization
 namespace: btc-forecast
 resources:
   - namespace.yaml
-  - configmap.yaml
+  - configmap-secret.yaml
   - pvc.yaml
   - deployment.yaml
   - service.yaml
   - hpa.yaml
+  - pdb.yaml
   - ingress.yaml
   - train-job.yaml
 images:

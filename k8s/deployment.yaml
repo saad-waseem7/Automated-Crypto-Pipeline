@@ -46,13 +46,13 @@ spec:
                 secretKeyRef:
                   name: btc-forecast-secret
                   key: RELOAD_TOKEN
-                  # Created by scripts/k8s_up.sh. Optional so a missing secret
-                  # disables /reload (the poller still works) instead of blocking pods.
+                  # Set by scripts/k8s_up.sh. Empty disables /reload (the poller
+                  # still delivers new models). Optional so a missing key never blocks pods.
                   optional: true
           resources:
             requests:
-              cpu: 250m
-              memory: 256Mi
+              cpu: 100m
+              memory: 128Mi
             limits:
               cpu: 500m
               memory: 512Mi
@@ -61,7 +61,7 @@ spec:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3

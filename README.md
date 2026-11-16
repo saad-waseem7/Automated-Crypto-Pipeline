@@ -10,10 +10,10 @@ See [docs/ASSIGNMENT_REVIEW.md](docs/ASSIGNMENT_REVIEW.md) for the spec critique
 
 | Part | Scope | State |
 |------|-------|-------|
-| A | Flask API, gunicorn, pytest | In review |
-| B | Docker, Compose, GitHub Actions | In review |
-| C | Airflow, ETL, training, Kubeflow | In review |
-| D | Kubernetes (manifests, HPA, ingress, load test, kind CI) | In review |
+| A | Flask API, gunicorn, pytest | Merged |
+| B | Docker, Compose, GitHub Actions | Merged |
+| C | Airflow, ETL, training, Kubeflow | Merged |
+| D | Kubernetes (manifests, HPA, ingress, load test, kind CI) | Merged |
 | E | Verification and report | Planned |
 
 ## Quick start (Ubuntu, Python 3.11 exactly, to match Docker and CI)
@@ -62,6 +62,32 @@ docker compose exec airflow airflow dags trigger btc_etl_pipeline
 ```
 
 Kubeflow: `pip install -r requirements-kfp.txt && python kubeflow/btc_kfp_pipeline.py` recompiles `kubeflow/btc_kfp_pipeline.yaml`.
+
+## Kubernetes (Minikube or kind)
+
+Prerequisites: Docker, `kubectl`, `minikube`. The GHCR image is public, so no pull secret is needed.
+
+```bash
+make k8s-up                                   # cluster, addons, manifests, first training job
+echo "$(minikube ip) btc-forecast.local" | sudo tee -a /etc/hosts
+curl -X POST http://btc-forecast.local/predict
+kubectl -n btc-forecast get pods,svc,hpa,ingress,pvc
+
+make install-loadtest && make loadtest        # drive the HPA; watch: kubectl -n btc-forecast get hpa -w
+kubectl -n btc-forecast delete pod <name>     # self-healing demo
+make k8s-down                                 # remove everything
+```
+
+Fresh clusters serve nothing until the first training job finishes (pods stay unready, never crash-loop).
+Manifests are validated offline by `make k8s-validate` and `tests/test_k8s_manifests.py`, and end to end on kind in CI.
+
+## Registry and secrets
+
+The image is published to GHCR (`ghcr.io/saad-waseem7/automated-crypto-pipeline`) on every push to `main`,
+tagged with the full commit SHA and `latest`. CI authenticates with the built-in `GITHUB_TOKEN`
+(least privilege, short-lived, nothing to rotate) instead of long-lived `DOCKER_USERNAME` / `DOCKER_PASSWORD`
+secrets; the assignment allows GHCR. No credentials are committed: `.env` is git-ignored, and the Kubernetes
+reload token is generated at deploy time.
 
 ## API
 

@@ -41,8 +41,14 @@ class ModelStore:
         return self._last_error
 
     def get(self) -> ModelBundle | None:
-        """Return the active bundle, refreshing first if the poll interval elapsed."""
-        if self._clock() - self._last_check >= self._poll:
+        """Return the active bundle, refreshing first if the poll interval elapsed.
+
+        While no model is loaded the interval is ignored and CURRENT is checked on
+        every call (one tiny file read). Otherwise a worker that polled just before
+        the first model was published would keep answering 503 for up to
+        ``poll_seconds`` while its sibling workers already serve.
+        """
+        if self._bundle is None or self._clock() - self._last_check >= self._poll:
             self.refresh()
         return self._bundle
 
@@ -76,6 +82,9 @@ class ModelStore:
             return True
 
     def _record_failure(self, version: str | None, exc: ArtifactError) -> None:
+        # Without a model get() retries on every request, so log each distinct
+        # failure once instead of once per request.
+        if str(exc) != self._last_error:
+            log.error("model load failed (version=%s): %s", version, exc)
         self._failed_version = version
         self._last_error = str(exc)
-        log.error("model load failed (version=%s): %s", version, exc)

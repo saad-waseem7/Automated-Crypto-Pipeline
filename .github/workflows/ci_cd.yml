@@ -286,7 +286,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build runtime image (local, for the smoke test)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: app/Dockerfile
@@ -298,7 +298,7 @@ jobs:
           cache-to: type=gha,scope=runtime,mode=max
 
       - name: Build seed image (local, for the smoke test)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: app/Dockerfile
@@ -321,7 +321,7 @@ jobs:
 
       - name: Push image (commit SHA and latest)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: app/Dockerfile

@@ -32,11 +32,14 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: |
-            requirements-dev.txt
+            requirements/dev.txt
             app/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r requirements/dev.txt
+
+      - name: Audit runtime dependencies for known vulnerabilities
+        run: pip install pip-audit && pip-audit -r app/requirements.txt
 
       - name: black
         run: black --check .
@@ -68,9 +71,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: requirements-kfp.txt
+          cache-dependency-path: requirements/kfp.txt
 
-      - run: pip install -r requirements-kfp.txt
+      - run: pip install -r requirements/kfp.txt
 
       - name: Compile the pipeline
         run: python kubeflow/btc_kfp_pipeline.py
@@ -155,9 +158,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: requirements/dev.txt
 
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements/dev.txt
 
       - name: Build the image
         run: docker build -f app/Dockerfile --target runtime -t btc-forecast-api:ci .

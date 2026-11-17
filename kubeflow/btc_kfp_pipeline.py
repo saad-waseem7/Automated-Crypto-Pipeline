@@ -6,7 +6,7 @@ between steps as KFP artifacts.
 
 Compile to the committed YAML spec with::
 
-    pip install -r requirements-kfp.txt
+    pip install -r requirements/kfp.txt
     python kubeflow/btc_kfp_pipeline.py
 
 The spec is compiled and checked in CI but not deployed: a full Kubeflow

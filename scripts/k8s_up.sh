@@ -33,8 +33,9 @@ if [[ -z "$token" ]]; then
 fi
 
 kubectl apply -k k8s
-kubectl -n "$NS" patch secret btc-forecast-secret --type merge \
-  -p "{\"stringData\":{\"RELOAD_TOKEN\":\"${token}\"}}"
+# The patch goes through stdin so the token never appears in the process list.
+kubectl -n "$NS" patch secret btc-forecast-secret --type merge --patch-file /dev/stdin \
+  <<<"{\"stringData\":{\"RELOAD_TOKEN\":\"${token}\"}}"
 # Pods read the token at start, so only a newly generated one needs a restart.
 if [[ "$fresh" == "1" ]]; then
   kubectl -n "$NS" rollout restart deployment/btc-forecast

@@ -1,4 +1,4 @@
--r app/requirements.txt
+-r ../app/requirements.txt
 pytest==9.2.0
 pytest-cov==7.1.0
 black==26.10.1

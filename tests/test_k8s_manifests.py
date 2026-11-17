@@ -70,7 +70,7 @@ def test_ingress_and_hpa_point_at_existing_objects() -> None:
     assert hpa["metrics"][0]["resource"]["target"]["averageUtilization"] == 60
 
 
-def test_deployment_matches_the_assignment_spec() -> None:
+def test_deployment_resources_and_probes() -> None:
     deployment = one("Deployment")
     assert deployment["spec"]["replicas"] >= 3
     container = deployment["spec"]["template"]["spec"]["containers"][0]

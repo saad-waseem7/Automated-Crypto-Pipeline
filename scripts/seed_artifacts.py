@@ -1,8 +1,8 @@
 """Write a model version trained on SYNTHETIC prices for local smoke tests.
 
-This exists so the API can be exercised before the real ETL and training jobs
-(Part C) exist. The metrics file is tagged ``data_source: synthetic`` so no one
-mistakes it for a real forecast.
+This exists so the API can be exercised, and the container smoke-tested, without
+running the real ETL and training jobs. The metrics file is tagged
+``data_source: synthetic`` so no one mistakes it for a real forecast.
 
 Usage: python -m scripts.seed_artifacts --model-dir models
 """

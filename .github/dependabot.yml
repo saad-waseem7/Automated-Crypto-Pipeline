@@ -20,3 +20,10 @@ updates:
       # numpy 2.5 dropped Python 3.11, which the image and CI target.
       - dependency-name: numpy
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+  - package-ecosystem: pip
+    directory: /requirements
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: numpy
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]

@@ -33,6 +33,23 @@ make run         # gunicorn on :5000
 make help        # all targets
 ```
 
+## Terminal client
+
+`scripts/btc_cli.py` reads the public endpoints and prints tables. It uses only the standard
+library and accepts only http(s) URLs. Exit codes: 0 success, 1 API error or not ready, 2 API
+unreachable or unusable answer, so it also works in shell scripts. Colors turn off for pipes and
+when `NO_COLOR` is set.
+
+```bash
+python -m scripts.btc_cli --url http://btc-forecast.local status
+python -m scripts.btc_cli predict --days 3
+python -m scripts.btc_cli metrics
+python -m scripts.btc_cli watch --interval 2     # Ctrl+C to stop; flags model version changes
+```
+
+`watch` is the easiest way to see a retrain land: run it, start a training job, and the line
+marked `model version changed` appears within `MODEL_POLL_SECONDS`.
+
 ## Docker Compose
 
 ```bash
@@ -112,8 +129,10 @@ kubectl -n btc-forecast delete $(kubectl -n btc-forecast get pods -l app.kuberne
 wait; awk '{print $2}' /tmp/heal.txt | sort | uniq -c
 ```
 
-The Deployment recreates the pod immediately. A stray 502 or 503 is possible while the ingress
-removes the terminating pod from its endpoints.
+The Deployment recreates the pod immediately. A `preStop` sleep of 5 seconds keeps the old pod
+serving while the ingress drops it from its endpoints, so the count should be a single line of
+`60 200`. If you see 502 or 503 here, the drain window is too short for your cluster: raise the
+sleep and keep `terminationGracePeriodSeconds` above sleep plus gunicorn's `graceful_timeout`.
 
 ## CI
 

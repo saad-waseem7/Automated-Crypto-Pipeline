@@ -163,3 +163,13 @@ def test_training_job_keeps_data_on_the_models_claim() -> None:
     env = {e["name"]: e["value"] for e in spec["containers"][0]["env"]}
     assert all(v.startswith("/app/models/data/") for v in env.values())
     assert [v["name"] for v in spec["volumes"]] == ["models"]
+
+
+def test_pod_termination_drains_traffic_before_shutdown() -> None:
+    pod = one("Deployment")["spec"]["template"]["spec"]
+    pre_stop = pod["containers"][0]["lifecycle"]["preStop"]["exec"]["command"]
+    assert pre_stop[0] == "sleep"
+    gunicorn_graceful_timeout = 30  # app/gunicorn.conf.py
+    assert pod["terminationGracePeriodSeconds"] >= (
+        int(pre_stop[1]) + gunicorn_graceful_timeout
+    )

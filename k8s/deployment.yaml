@@ -22,7 +22,8 @@ spec:
         app.kubernetes.io/name: btc-forecast
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 30
+      # preStop sleep (5) + gunicorn graceful_timeout (30) + margin.
+      terminationGracePeriodSeconds: 40
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -81,6 +82,13 @@ spec:
               port: http
             periodSeconds: 2
             failureThreshold: 30
+          lifecycle:
+            # Endpoint removal and SIGTERM race each other. Sleeping first keeps
+            # the pod serving until the ingress and kube-proxy stop routing to it,
+            # so deleting a pod does not drop in-flight or newly routed requests.
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

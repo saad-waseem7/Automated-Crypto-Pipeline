@@ -33,6 +33,17 @@ curl -X POST localhost:5000/predict -H 'Content-Type: application/json' -d '{"fo
 curl localhost:5000/metrics
 ```
 
+A terminal client (standard library only) shows the same data as tables:
+
+```bash
+make cli-status     # liveness, readiness, served model version
+make forecast       # 7-day forecast with a trend sparkline
+make cli-metrics    # model versus naive baseline and the gate result
+python -m scripts.btc_cli watch     # polls readiness and flags model changes
+```
+
+Point it at another API with `BTC_API_URL`, e.g. `make forecast BTC_API_URL=http://btc-forecast.local`.
+
 Other ways to run it:
 
 | Goal | Command |
@@ -82,7 +93,7 @@ airflow/        Airflow image (adds an isolated training virtualenv)
 kubeflow/       Kubeflow Pipelines spec (source and compiled YAML)
 k8s/            Kubernetes manifests (kustomize)
 loadtest/       Locust load test
-scripts/        deploy, smoke and API check scripts, fake Binance server, synthetic seeder
+scripts/        terminal client, deploy and smoke scripts, fake Binance server, synthetic seeder
 requirements/   dev, kubeflow and load-test dependencies (runtime ones live in app/)
 tests/          pytest suite
 docs/           architecture and operations

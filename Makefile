@@ -2,9 +2,10 @@
 # version can pass locally and fail in the pipeline.
 PYTHON ?= python3.11
 VENV ?= .venv
+BTC_API_URL ?= http://127.0.0.1:5000
 BIN := $(VENV)/bin
 
-.PHONY: install fmt lint typecheck test check seed run docker-build smoke k8s-up k8s-down k8s-validate install-loadtest loadtest help
+.PHONY: install fmt lint typecheck test check seed run docker-build smoke k8s-up k8s-down k8s-validate install-loadtest loadtest help cli-status forecast cli-metrics cli-status forecast cli-metrics
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -59,3 +60,14 @@ install-loadtest: ## Install Locust into .venv
 loadtest: ## Run the 3 minute load test against Minikube
 	$(BIN)/locust -f loadtest/locustfile.py --headless -u 200 -r 20 -t 3m \
 		--host http://$$(minikube ip):30080 --csv loadtest/results
+
+# The CLI talks to BTC_API_URL (default http://127.0.0.1:5000). For Minikube:
+#   make forecast BTC_API_URL=http://btc-forecast.local
+cli-status: ## Show API liveness, readiness and model version
+	BTC_API_URL=$(BTC_API_URL) $(BIN)/python -m scripts.btc_cli status
+
+forecast: ## Print the 7-day forecast table
+	BTC_API_URL=$(BTC_API_URL) $(BIN)/python -m scripts.btc_cli predict
+
+cli-metrics: ## Print model versus naive baseline and the gate result
+	BTC_API_URL=$(BTC_API_URL) $(BIN)/python -m scripts.btc_cli metrics

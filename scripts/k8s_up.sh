@@ -10,11 +10,20 @@ command -v kubectl >/dev/null || { echo "kubectl not found" >&2; exit 1; }
 
 if [[ "${USE_MINIKUBE:-1}" == "1" ]]; then
   command -v minikube >/dev/null || { echo "minikube not found" >&2; exit 1; }
-  minikube status >/dev/null 2>&1 || minikube start --cpus=4 --memory=4096
-  # The addon's own readiness check times out on slow image pulls even though
-  # the pods come up later, so do not abort on it. Wait explicitly below.
-  minikube addons enable ingress || echo "ingress addon check timed out, waiting for the controller" >&2
-  minikube addons enable metrics-server || echo "metrics-server addon check timed out" >&2
+  # Start only when needed. A stopped cluster restarts from its saved config and
+  # cached images, so this downloads nothing after the first run.
+  if [[ "$(minikube status -f '{{.Host}}' 2>/dev/null || true)" != "Running" ]]; then
+    minikube start --cpus=4 --memory=4096
+  fi
+  # Enable each addon once. Re-enabling an installed addon re-applies its
+  # manifests for no benefit, and its readiness check times out on slow pulls
+  # even though the pods come up later, so never abort on it.
+  if ! kubectl -n ingress-nginx get deployment ingress-nginx-controller >/dev/null 2>&1; then
+    minikube addons enable ingress || echo "ingress addon check timed out, waiting for the controller" >&2
+  fi
+  if ! kubectl -n kube-system get deployment metrics-server >/dev/null 2>&1; then
+    minikube addons enable metrics-server || echo "metrics-server addon check timed out" >&2
+  fi
   kubectl -n ingress-nginx wait --for=condition=ready pod \
     -l app.kubernetes.io/component=controller --timeout=600s \
     || { kubectl -n ingress-nginx get pods >&2; echo "ingress controller not ready" >&2; exit 1; }
@@ -41,12 +50,19 @@ if [[ "$fresh" == "1" ]]; then
   kubectl -n "$NS" rollout restart deployment/btc-forecast
 fi
 
-# No model exists on a fresh volume: run one training job now instead of waiting
-# for the nightly schedule. Pods stay Ready=false until it finishes.
-job="btc-train-bootstrap-$(date +%s)"
-kubectl -n "$NS" create job "$job" --from=cronjob/btc-train
-kubectl -n "$NS" wait --for=condition=complete "job/$job" --timeout=600s \
-  || { kubectl -n "$NS" logs "job/$job" --tail=50 >&2; exit 1; }
+# A fresh volume has no model, and pods stay unready until one exists. Train once
+# in that case only: on every later run the model is already on the volume, and
+# a needless job would re-download candles and retrain.
+kubectl -n "$NS" wait --for=jsonpath='{.status.phase}'=Running pod \
+  -l app.kubernetes.io/name=btc-forecast --timeout=300s
+if kubectl -n "$NS" exec deployment/btc-forecast -- test -e /app/models/CURRENT; then
+  echo "model already on the volume, skipping the bootstrap training job"
+else
+  job="btc-train-bootstrap-$(date +%s)"
+  kubectl -n "$NS" create job "$job" --from=cronjob/btc-train
+  kubectl -n "$NS" wait --for=condition=complete "job/$job" --timeout=600s \
+    || { kubectl -n "$NS" logs "job/$job" --tail=50 >&2; exit 1; }
+fi
 kubectl -n "$NS" rollout status deployment/btc-forecast --timeout=300s
 
 kubectl -n "$NS" get pods,svc,hpa,ingress

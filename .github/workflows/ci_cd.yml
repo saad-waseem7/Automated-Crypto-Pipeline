@@ -228,7 +228,7 @@ jobs:
           curl -fsS -X POST -H 'Host: btc-forecast.local' http://127.0.0.1/predict \
             | python -c 'import json,sys; d=json.load(sys.stdin); assert len(d["predictions"])==7, d'
 
-      - name: Self-healing, a deleted pod is replaced without dropped requests
+      - name: Self-healing, a deleted pod is replaced with zero failed requests
         run: |
           victim="$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=btc-forecast -o jsonpath='{.items[0].metadata.name}')"
           kubectl -n "$NS" delete pod "$victim" --wait=false
@@ -239,7 +239,7 @@ jobs:
             sleep 0.5
           done
           echo "non-200 responses during pod replacement: $failures"
-          test "$failures" -le 2
+          test "$failures" -eq 0
           kubectl -n "$NS" rollout status deployment/btc-forecast --timeout=120s
           test "$(kubectl -n "$NS" get deploy btc-forecast -o jsonpath='{.status.readyReplicas}')" -ge 3
 

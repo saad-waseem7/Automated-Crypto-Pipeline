@@ -48,8 +48,9 @@ Other ways to run it:
 
 | Goal | Command |
 |------|---------|
-| Containers (API, Postgres, Airflow) | `cp .env.example .env`, then `docker compose run --rm seed && docker compose --profile airflow up -d --build` |
-| Kubernetes on Minikube | `make k8s-up` |
+| Containers (API, Postgres, Airflow) | `cp .env.example .env`, then `make build`, then `docker compose run --rm seed && docker compose --profile airflow up -d` |
+| Kubernetes on Minikube | `make k8s-up` (one time) |
+| Day to day, no downloads | `make start`, `make stop`, `make status` |
 | Real data, no Airflow | `python -m src.etl_fetch && python -m src.features && python -m src.train_forecast` |
 | Load test | `make install-loadtest && make loadtest` |
 

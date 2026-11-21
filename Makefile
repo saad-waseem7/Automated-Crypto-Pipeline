@@ -5,7 +5,7 @@ VENV ?= .venv
 BTC_API_URL ?= http://127.0.0.1:5000
 BIN := $(VENV)/bin
 
-.PHONY: install fmt lint typecheck test check seed run docker-build smoke k8s-up k8s-down k8s-validate install-loadtest loadtest help cli-status forecast cli-metrics cli-status forecast cli-metrics
+.PHONY: install fmt lint typecheck test check seed run docker-build smoke k8s-up k8s-down k8s-validate install-loadtest loadtest help cli-status forecast cli-metrics start stop status build
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -71,3 +71,17 @@ forecast: ## Print the 7-day forecast table
 
 cli-metrics: ## Print model versus naive baseline and the gate result
 	BTC_API_URL=$(BTC_API_URL) $(BIN)/python -m scripts.btc_cli metrics
+
+# Day to day. None of these download or build anything.
+start: ## Start Compose and Minikube from what is already installed
+	scripts/env.sh start
+
+stop: ## Stop Compose and Minikube, keeping all data and images
+	scripts/env.sh stop
+
+status: ## Show what is running
+	scripts/env.sh status
+
+# One time, and again only after changing app/, src/ or the Dockerfiles.
+build: ## Build the Compose images (cached layers, downloads only what is new)
+	docker compose --profile airflow --profile seed build

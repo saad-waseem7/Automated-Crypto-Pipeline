@@ -5,6 +5,9 @@
 #   docker compose up -d --build    # API on http://localhost:5000
 #   docker compose --profile airflow up -d   # adds Postgres + Airflow UI on :8080
 #
+# Day to day use scripts/env.sh (make start / make stop): it starts what already
+# exists and never pulls or builds. Rebuild only after code changes: make build.
+#
 # The API mounts the model volume read-only; only trainers (and the seed job) write.
 
 name: btc-forecast
@@ -23,6 +26,7 @@ services:
       dockerfile: app/Dockerfile
       target: runtime
     image: btc-forecast-api:local
+    pull_policy: never  # built locally, never looked up in a registry
     ports:
       - "127.0.0.1:5000:5000"
     environment:
@@ -54,6 +58,7 @@ services:
       dockerfile: app/Dockerfile
       target: seed
     image: btc-forecast-seed:local
+    pull_policy: never
     volumes:
       - models:/app/models
     profiles: ["seed"]
@@ -100,6 +105,7 @@ services:
       context: .
       dockerfile: airflow/Dockerfile
     image: btc-forecast-airflow:local
+    pull_policy: never
     command: standalone
     environment:
       <<: *airflow-env

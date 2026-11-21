@@ -3,25 +3,41 @@
 Runbooks for running, testing and troubleshooting. For how the system works, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## After a reboot
-
-Docker starts by itself. Compose services marked `restart: unless-stopped` normally come back.
-Minikube does not.
+## Daily use: start and stop without downloads
 
 ```bash
-cd Automated-Crypto-Pipeline && source .venv/bin/activate
-docker compose --profile airflow up -d      # API, Postgres, Airflow
-minikube start                              # reuses the existing cluster
-kubectl -n btc-forecast get pods            # wait for Running 1/1
-grep btc-forecast /etc/hosts; minikube ip   # the two addresses must match
+make start      # Compose stack, then Minikube and the cluster. Nothing is pulled or built.
+make status     # what is running
+make stop       # stop everything, keeping all volumes, images and the cluster
 ```
 
-If the addresses differ: `sudo sed -i '/btc-forecast.local/d' /etc/hosts`, then
-`echo "$(minikube ip) btc-forecast.local" | sudo tee -a /etc/hosts`.
-If the cluster or deployment is gone, `make k8s-up` rebuilds everything and is safe to re-run.
+`make start` runs `docker compose up -d --pull never --no-build`, restarts a stopped Minikube from
+its saved configuration, waits until the pods are Ready, and tells you if `/etc/hosts` points at an
+outdated Minikube address (it prints the fix and never runs sudo itself). If an image or the cluster
+is missing it stops and names the one-time command instead of downloading behind your back.
+`K8S=0 make start` skips Kubernetes. After a reboot Docker restarts containers that were running,
+but Minikube never restarts itself, so run `make start`.
 
-Stop cleanly before shutdown: `minikube stop` and `docker compose --profile airflow stop`.
-Never run `docker compose down -v` unless you want to delete the models and Airflow data.
+### What downloads, and when
+
+| Action | Network use |
+|--------|-------------|
+| First `make build` | Base images (Python, Airflow, Postgres, busybox) and pip packages. Large, once. |
+| First `make k8s-up` | Minikube base image, Kubernetes images, ingress and metrics-server images, the application image from GHCR. Large, once. |
+| `make start`, `make stop`, `make status` | None. |
+| `make k8s-up` again | None for images. Skips addons that are installed and skips the bootstrap training job when a model is on the volume. |
+| `make build` after a code change | Only layers that changed. The dependency layers are cached, so editing code downloads nothing; changing `app/requirements.txt` re-downloads the packages. |
+| Airflow DAG or CronJob run | A few kilobytes: only new daily candles from Binance, since raw data persists on a volume. |
+| Kubeflow | None. It is a compiled spec and is not deployed. |
+
+Never run `minikube delete`, `docker compose down -v` or `docker system prune -a`: they erase the
+cluster, the volumes or the cached images, and the next start is a full download again. If you ever
+need a clean slate, expect the one-time downloads above.
+
+If a start does download, something upstream changed: a deleted image, a changed
+`app/requirements.txt`, or a moved base-image tag on a rebuild. Compose and Kubernetes themselves
+never pull images that are already present (`pull_policy: never` for the locally built images,
+`imagePullPolicy: IfNotPresent` in the manifests).
 
 ## Local development
 
@@ -54,6 +70,7 @@ marked `model version changed` appears within `MODEL_POLL_SECONDS`.
 
 ```bash
 cp .env.example .env                        # then change every value
+make build                                  # one time, and again after code changes
 docker compose run --rm seed                # first run only: SYNTHETIC model so /ready is 200
 docker compose up -d --build                # API on http://127.0.0.1:5000
 scripts/check_api.sh                        # black-box checks against the running API
